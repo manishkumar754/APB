@@ -1,0 +1,147 @@
+//Design
+
+`define AWIDTH 32
+`define DWIDTH 32
+
+module slave_ip (
+    input  bit   [`AWIDTH-1:0]  apb_addr,
+    input  bit                  apb_sel,
+    input  bit                  apb_write,
+    output logic [`DWIDTH-1:0]  apb_rdata,
+    input  logic [`DWIDTH-1:0]  apb_wdata,
+    input  bit                  clk,
+    input  bit                  rst
+);
+
+  logic [`DWIDTH-1:0] ram [0:255];
+
+  // Synchronous read with reset
+  always_ff @(posedge clk) begin
+    if (rst)
+      apb_rdata <= '0;
+    else if (apb_sel && !apb_write)
+      apb_rdata <= ram[apb_addr];
+    else
+      apb_rdata <= '0;
+  end
+
+  // Synchronous write with reset
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      integer i;
+      for (i = 0; i < 256; i++) begin
+        ram[i] <= '0;
+      end
+    end else if (apb_sel && apb_write) begin
+      ram[apb_addr] <= apb_wdata;
+    end
+  end
+
+endmodule
+
+
+
+
+
+
+
+//Testbench
+
+`define AWIDTH 32
+`define DWIDTH 32
+
+module top;
+
+  reg   [`AWIDTH-1:0]  apb_addr;
+  reg                  apb_write;
+  wire  [`DWIDTH-1:0]  apb_rdata;
+  reg   [`DWIDTH-1:0]  apb_wdata;
+  reg                  clk;
+  reg                  apb_sel;
+  reg                  rst;
+
+  // Instantiate DUT
+  slave_ip DUT (
+    .apb_addr(apb_addr),
+    .apb_sel(apb_sel),
+    .apb_write(apb_write),
+    .apb_rdata(apb_rdata),
+    .apb_wdata(apb_wdata),
+    .clk(clk),
+    .rst(rst)
+  );
+
+  // Clock generation
+  always #5 clk = ~clk;
+
+  logic [`DWIDTH-1:0] mem_model [0:255];
+
+  initial begin
+    clk = 0;
+    apb_sel = 0;
+    apb_write = 0;
+    apb_addr = 0;
+    apb_wdata = 0;
+    rst = 1;
+
+    repeat(2) @(posedge clk);
+    rst = 0;
+
+    repeat(2) @(posedge clk);
+
+    repeat (10) begin
+      reg [7:0] rand_addr;
+      reg [`DWIDTH-1:0] rand_data;
+
+      rand_addr = $urandom_range(0, 255);
+      rand_data = $urandom;
+
+      write_read(rand_addr, rand_data);
+    end
+
+    repeat(5) @(posedge clk);
+    $finish;
+  end
+
+  // Task to write and then read with proper delay
+  task write_read(input reg [7:0] addr_t, input [`DWIDTH-1:0] wdata_t);
+    begin
+      // WRITE
+      apb_sel    <= 1;
+      apb_addr   <= addr_t;
+      apb_wdata  <= wdata_t;
+      apb_write  <= 1;
+      @(posedge clk);
+      apb_sel    <= 0;
+
+      mem_model[addr_t] = wdata_t;
+
+      // Wait for write to complete
+      repeat(2) @(posedge clk);
+
+      // READ
+      apb_sel    <= 1;
+      apb_addr   <= addr_t;
+      apb_write  <= 0;
+      @(posedge clk);
+      apb_sel    <= 0;
+
+      // Wait for read value
+      repeat(1) @(posedge clk);
+
+      // Compare & display
+      $display("[WRITE] Addr: %0d, Data: %0d", addr_t, wdata_t);
+      $display("[READ ] Addr: %0d, Data Read: %0d, Expected: %0d %s\n",
+                addr_t, apb_rdata, mem_model[addr_t],
+                (apb_rdata === mem_model[addr_t]) ? "[PASS]" : "[FAIL]");
+    end
+  endtask
+
+  // VCD dump
+  initial begin
+    $dumpfile("dump.vcd");
+    $dumpvars;
+  end
+
+endmodule
+
